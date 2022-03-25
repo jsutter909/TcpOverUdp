@@ -1,9 +1,7 @@
 #!/usr/bin/env -S python3 -u
 import hashlib
 import argparse, socket, time, json, select, struct, sys, math
-from typing import Any, Dict
-
-from sympy import sequence
+from typing import Any, DictW
 
 DATA_SIZE = 1375
 STARTING_WINDOW = 3 # packets
