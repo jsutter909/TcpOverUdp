@@ -1,1 +1,4 @@
-# idk bro
+# Method
+
+# Pitfals
+

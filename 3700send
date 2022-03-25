@@ -31,6 +31,9 @@ class Sender:
         sys.stderr.flush()
 
     def send(self, message: Dict[str, Any]):
+        """
+        Given *NEW* data message, send it to the receiver and update the current sequence number.
+        """
         message["checksum"] = self.compute_checksum(json.dumps(message))
         self.socket.sendto(json.dumps(message).encode('utf-8'), (self.host, self.remote_port))
 
@@ -59,52 +62,65 @@ class Sender:
             socks = select.select(sockets, [], [], 0.1)[0]
             for conn in socks:
                 if conn == self.socket:
-                    k, addr = conn.recvfrom(65535)
-                    msg = k.decode('utf-8')
-                    self.log(msg)
-
-                    loaded_msg = ""
-                    try:
-                        loaded_msg = json.loads(msg)
-                    except:
-                        self.log("Received corrupted packet")
-
-                    if loaded_msg == "" or not self.validate_checksum(loaded_msg):
-                        self.log("Received corrupted packet")
-                        continue
-
-                    self.handle_packet(loaded_msg)
-                    
-
+                    self.receive_packet(conn)
                 elif conn == sys.stdin:
-                    data = sys.stdin.read(DATA_SIZE)
-                    
-                    if len(data) == 0 and self.no_outstanding_packets():
-                        self.log("All done!")
-                        return 
-                    elif len(data) == 0:
-                        self.log(f"Sent all data, waiting for incoming packets{self.outstanding_packets}")
-                    else:
-                        self.send_msg(data)
+                    self.read_and_send_msg()
 
-        return
+    def receive_packet(self, conn):
+        """
+        Listen on the socket and get any input packets. If there is a packet, then handle it. If the packet is malformed, then throw it out do nothing.
+        """
+        k, addr = conn.recvfrom(65535)
+        msg = k.decode('utf-8')
+        self.log(msg)
+
+        loaded_msg = ""
+        try:
+            loaded_msg = json.loads(msg)
+        except:
+            self.log("Received corrupted packet")
+
+        if loaded_msg == "" or not self.validate_checksum(loaded_msg):
+            self.log("Received corrupted packet")
+            return
+
+        self.handle_packet(loaded_msg)
+
+    def read_and_send_msg(self):
+        """
+        Read a message from stdin and send it to the receiver. If there is nothing left to read, then exit the program.
+        """
+        data = sys.stdin.read(DATA_SIZE)
+        
+        if len(data) == 0 and self.no_outstanding_packets():
+            self.log("All done!")
+            sys.exit(0) 
+        elif len(data) == 0:
+            self.log(f"Sent all data, waiting for incoming packets{self.outstanding_packets}")
+        else:
+            self.send_msg(data)
 
     def handle_packet(self, packet):
-        if packet["type"] == "syn-ack":
-            self.handle_syn_ack(packet)
-        elif packet["type"] == "ack":
+        """
+        Dispatch a packet to the proper handler.
+        """
+        if packet["type"] == "ack":
             self.handle_ack(packet)
         else:
             raise Exception("Unknown packet type")
 
-    def send_syn(self, window_size):
-        self.send({ "type": "syn", "seq": self.current_sequence_number, "wnd": window_size })
-
     def send_msg(self, data):
+        """
+        Send a data packet to the receiver
+        """
         self.log("Sending message '%s'" % data)
         self.send({ "type": "msg", "seq": self.current_sequence_number, "data": data })
 
     def handle_ack(self, packet):
+        """
+        Handle an ack packet. There are three main tasks, first update the RTT estimate, update stats to be used for window size computation, and then 
+        finally remove the packets from our outstanding packets list.
+        """
         self.log("Received ACK packet '%s'" % packet)
 
         if int(packet["seq"]) in self.outstanding_packets:
@@ -117,16 +133,28 @@ class Sender:
             self.log(f"Received duplicate ACK, sequence number {int(packet['seq'])}")
 
     def is_window_full(self):
+        """
+        returns true if there are as many outstanding, not delinquent packets as there are window slots. Otherwise return false.
+        """
         return len(list(filter(lambda timestamp: (time.time() - timestamp) < self.timeout, self.outstanding_packets.values()))) >= self.window_size
 
     def no_outstanding_packets(self):
+        """
+        Returns true if there are no outstanding(packets sent but not acked) packets.
+        """
         return len(self.outstanding_packets) == 0
 
     def compute_checksum(self, packet: str):
+        """
+        Given a packet, compute the sha1 checksum and return it.
+        """
         packet_bytes = packet.encode('utf-8')
         return hashlib.sha1(packet_bytes).hexdigest()
 
     def validate_checksum(self, message: Dict[str, Any]) -> bool:
+        """
+        Given a packet, validate that the checksum is the correct sha1 hash of the packet minus the checksum entry.
+        """
         if "checksum" not in message.keys():
             return False
 
@@ -137,6 +165,9 @@ class Sender:
         return computed_hashsum == message["checksum"]
 
     def get_delinquent_packets(self):
+        """
+        Gets all of the packets that have been sent but not acknowledged within the timeout period
+        """
         
         def _delinquent_generator():
             for seq, time_sent in self.outstanding_packets.items():
@@ -147,6 +178,9 @@ class Sender:
 
     @property
     def timeout(self):
+        """
+        Returns the timeout for the current round trip time
+        """
         return 2*self.round_trip_time
 
     @property
