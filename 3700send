@@ -24,7 +24,7 @@ class Sender:
         self.sent_packets = {} #packet sequence number -> packet, for retransmission
 
         self.round_trip_time = ROUND_TRIP_TIME
-        self.num_delinquent = 0
+        self.window_size = STARTING_WINDOW
 
     def log(self, message):
         sys.stderr.write(message + "\n")
@@ -56,9 +56,7 @@ class Sender:
                     self.socket.sendto(json.dumps(delinquent_packets[0]).encode('utf-8'), (self.host, self.remote_port))
                     self.sent_packets[int(delinquent_packets[0]['seq'])] = delinquent_packets[0]
                     self.outstanding_packets[int(delinquent_packets[0]['seq'])] = time.time()
-                    self.num_delinquent += 1
-
-            self.log(str(self.is_window_full()))
+                    self.window_size/=2
 
             sockets = [self.socket, sys.stdin] if not (self.is_window_full() or len(self.get_delinquent_packets()) > 0) else [self.socket]
 
@@ -100,6 +98,7 @@ class Sender:
             sys.exit(0) 
         elif len(data) == 0:
             self.log(f"Sent all data, waiting for incoming packets{self.outstanding_packets}")
+            time.sleep(0.001)
         else:
             self.send_msg(data)
 
@@ -132,6 +131,8 @@ class Sender:
 
             del self.outstanding_packets[int(packet["seq"])]
             del self.sent_packets[int(packet["seq"])]
+
+            self.window_size += 1
         else:
             self.log(f"Received duplicate ACK, sequence number {int(packet['seq'])}")
 
@@ -185,17 +186,6 @@ class Sender:
         Returns the timeout for the current round trip time
         """
         return 2*self.round_trip_time
-
-    @property
-    def window_size(self):
-        """
-        A somewhat weird formula I came up with that scales the size of the frame with the number of packets successfully sent. It has a minimum frame 
-        size of 2.
-        """
-        if self.num_delinquent != 0:
-            return max(MIN_WINDOW, MIN_WINDOW + (self.current_sequence_number / (self.num_delinquent + 2)))
-        else:
-            return MIN_WINDOW + self.current_sequence_number
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='send data')

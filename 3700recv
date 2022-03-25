@@ -66,8 +66,6 @@ class Receiver:
             self.send({ "type": "ack", "seq": packet["seq"] })
             return
 
-        self.log(f"{self.received_packets}")
-
         self.received_packets[int(packet["seq"])] = packet
 
         #print packets that we know are now in order
