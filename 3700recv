@@ -26,6 +26,9 @@ class Receiver:
         sys.stderr.flush()
 
     def run(self):
+        """
+        The main loop of the receiver.
+        """
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
@@ -54,6 +57,9 @@ class Receiver:
         return
 
     def handle_packet(self, packet: Dict[str, Any]):
+        """
+        Handle a packet received from the network.
+        """
 
         if int(packet["seq"]) in self.received_packets.keys():
             self.log("Already received packet '%s'" % packet)
@@ -79,16 +85,25 @@ class Receiver:
         self.handle_msg(packet)
 
     def handle_msg(self, packet: Dict[str, Any]):
+        """
+        Handle a message packet received from the network.
+        """
         self.log("Received message '%s'" % packet)
 
         # Always send back an ack
         self.send({ "type": "ack", "seq": packet["seq"] })
 
     def compute_checksum(self, packet: str):
+        """
+        Compute the checksum of a packet.
+        """
         packet_bytes = packet.encode('utf-8')
         return hashlib.sha1(packet_bytes).hexdigest()
 
     def validate_checksum(self, message: Dict[str, Any]) -> bool:
+        """
+        Validate the checksum of a message.
+        """
         if "checksum" not in message.keys():
             return False
 

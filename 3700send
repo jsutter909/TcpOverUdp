@@ -42,6 +42,9 @@ class Sender:
         self.current_sequence_number += 1
 
     def run(self):
+        """
+        The main loop of the sender.
+        """
         while True:
 
             #if we are in delinquency mode, work out of the backlog first, and then read from stdin.
