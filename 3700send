@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -u
 import hashlib
 import argparse, socket, time, json, select, struct, sys, math
-from typing import Any
+from typing import Any, Dict
 
 DATA_SIZE = 1375
 STARTING_WINDOW = 3 # packets
@@ -18,7 +18,7 @@ class Sender:
         self.socket.bind(('0.0.0.0', 0))
         self.waiting = False
 
-        self.current_sequence_number = 0
+        self.current_sequence_number = 0/
         self.window_size = STARTING_WINDOW
         self.outstanding_packets = {} #packet sequence number -> time, for delinquency detection
         self.sent_packets = {} #packet sequence number -> packet, for retransmission
