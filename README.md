@@ -4,4 +4,4 @@ I use a sliding window. The window has a minimum size of 2 packets, and slowly g
 
 # Pitfals
 
-A current pitfal of my implementation is that its hard for my window to grow quickly, and if the throughput shrinks rapidly, the algorithm may overcompensate on the backoff and take a very long time(10k+) packets to catch back up. That being said, none of the tests address this circumstance.
+A current pitfal of my implementation is that its hard for my window to grow quickly. Also, if the throughput shrinks rapidly, the algorithm may overcompensate on the backoff and take a very long time(10k+) packets to catch back up. That being said, none of the tests address this circumstance.
