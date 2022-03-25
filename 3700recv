@@ -1,0 +1,103 @@
+#!/usr/bin/env -S python3 -u
+import hashlib
+import argparse, socket, time, json, select, struct, sys, math
+from typing import Any, Dict
+
+class Receiver:
+    def __init__(self):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(('0.0.0.0', 0))
+        self.port = self.socket.getsockname()[1]
+        self.log("Bound to port %d" % self.port)
+
+        self.remote_host = None
+        self.remote_port = None
+
+
+        self.sequence_number = 0
+        self.received_packets = {}
+
+    def send(self, message):
+        message["checksum"] = self.compute_checksum(json.dumps(message))
+        self.socket.sendto(json.dumps(message).encode('utf-8'), (self.remote_host, self.remote_port))
+
+    def log(self, message):
+        sys.stderr.write(message + "\n")
+        sys.stderr.flush()
+
+    def run(self):
+        while True:
+            socks = select.select([self.socket], [], [])[0]
+            for conn in socks:
+                data, addr = conn.recvfrom(65535)
+
+                # Grab the remote host/port if we don't alreadt have it
+                if self.remote_host is None:
+                    self.remote_host = addr[0]
+                    self.remote_port = addr[1]
+
+                data = data.decode('utf-8')
+
+
+                loaded_msg = ""
+                try:
+                    loaded_msg = json.loads(data)
+                except:
+                    self.log("Received corrupted packet")
+
+                if loaded_msg == "" or not self.validate_checksum(loaded_msg):
+                    self.log("Invalid checksum, ignoring packet")
+                    continue
+
+                self.handle_packet(loaded_msg)
+
+        return
+
+    def handle_packet(self, packet: Dict[str, Any]):
+
+        if int(packet["seq"]) in self.received_packets.keys():
+            self.log("Already received packet '%s'" % packet)
+            self.send({ "type": "ack", "seq": packet["seq"] })
+            return
+
+        self.log(f"{self.received_packets}")
+
+        self.received_packets[int(packet["seq"])] = packet
+
+        #print packets that we know are now in order
+        index = self.sequence_number
+        while index in self.received_packets:
+            if self.received_packets[index]["type"] == "msg":
+                # Print out the data to stdout
+                self.log("now printing '%s' packet " % self.received_packets[index]["seq"])
+                print(self.received_packets[index]["data"], end='', flush=True)
+                del self.received_packets[index]
+
+            self.sequence_number += 1
+            index += 1
+
+        self.handle_msg(packet)
+
+    def handle_msg(self, packet: Dict[str, Any]):
+        self.log("Received message '%s'" % packet)
+
+        # Always send back an ack
+        self.send({ "type": "ack", "seq": packet["seq"] })
+
+    def compute_checksum(self, packet: str):
+        packet_bytes = packet.encode('utf-8')
+        return hashlib.sha1(packet_bytes).hexdigest()
+
+    def validate_checksum(self, message: Dict[str, Any]) -> bool:
+        message_copy = message.copy()
+        del message_copy["checksum"]
+
+        computed_hashsum = hashlib.sha1(json.dumps(message_copy).encode('utf-8')).hexdigest()
+        return computed_hashsum == message["checksum"]
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='receive data')
+    args = parser.parse_args()
+    sender = Receiver()
+    sender.run()

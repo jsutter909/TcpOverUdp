@@ -1,0 +1,149 @@
+#!/usr/bin/env -S python3 -u
+import hashlib
+import argparse, socket, time, json, select, struct, sys, math
+from typing import Any, Dict
+
+from sympy import sequence
+
+DATA_SIZE = 1375
+STARTING_WINDOW = 3 # packets
+# GROWTH_RATE = 1 #packet for every packet received
+ROUND_TRIP_TIME = 1 #0.5 seconds
+TIMEOUT = ROUND_TRIP_TIME * 2 #2 times the round trip time
+
+class Sender:
+    def __init__(self, host, port):
+        self.host = host
+        self.remote_port = int(port)
+        self.log("Sender starting up using port %s" % self.remote_port)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(('0.0.0.0', 0))
+        self.waiting = False
+
+        self.current_sequence_number = 0
+        self.window_size = STARTING_WINDOW
+        self.outstanding_packets = {} #packet sequence number -> time, for delinquency detection
+        self.sent_packets = {} #packet sequence number -> packet, for retransmission
+
+    def log(self, message):
+        sys.stderr.write(message + "\n")
+        sys.stderr.flush()
+
+    def send(self, message: Dict[str, Any]):
+        message["checksum"] = self.compute_checksum(json.dumps(message))
+        self.socket.sendto(json.dumps(message).encode('utf-8'), (self.host, self.remote_port))
+
+        self.sent_packets[self.current_sequence_number] = message
+        self.outstanding_packets[self.current_sequence_number] = time.time()
+        self.current_sequence_number += 1
+
+    def run(self):
+        while True:
+
+            # self.log(f"Delinquent packets {self.get_delinquent_packets()}")
+
+            #if we are in delinquency mode, work out of the backlog first, and then read from stdin.
+            delinquent_packets = sorted(self.get_delinquent_packets(), key=lambda x: int(x["seq"]))
+            if len(delinquent_packets) != 0:
+                if not self.is_window_full():
+                    #side channel send packets
+                    self.log(f"Resending packet {delinquent_packets[0]['seq']} message {delinquent_packets[0]}")
+                    self.socket.sendto(json.dumps(delinquent_packets[0]).encode('utf-8'), (self.host, self.remote_port))
+                    self.sent_packets[int(delinquent_packets[0]['seq'])] = delinquent_packets[0]
+                    self.outstanding_packets[int(delinquent_packets[0]['seq'])] = time.time()
+
+            self.log(str(self.is_window_full()))
+
+            sockets = [self.socket, sys.stdin] if not (self.is_window_full() or len(self.get_delinquent_packets()) > 0) else [self.socket]
+
+            socks = select.select(sockets, [], [], 0.1)[0]
+            for conn in socks:
+                if conn == self.socket:
+                    k, addr = conn.recvfrom(65535)
+                    msg = k.decode('utf-8')
+                    self.log(msg)
+
+                    loaded_msg = ""
+                    try:
+                        loaded_msg = json.loads(msg)
+                    except:
+                        self.log("Received corrupted packet")
+
+                    if loaded_msg == "" or not self.validate_checksum(loaded_msg):
+                        self.log("Received corrupted packet")
+                        continue
+
+                    self.handle_packet(loaded_msg)
+                    
+
+                elif conn == sys.stdin:
+                    data = sys.stdin.read(DATA_SIZE)
+                    
+                    if len(data) == 0 and self.no_outstanding_packets():
+                        self.log("All done!")
+                        return 
+                    elif len(data) == 0:
+                        self.log(f"Sent all data, waiting for incoming packets{self.outstanding_packets}")
+                        time.sleep(0.1)
+                    else:
+                        self.send_msg(data)
+
+        return
+
+    def handle_packet(self, packet):
+        if packet["type"] == "syn-ack":
+            self.handle_syn_ack(packet)
+        elif packet["type"] == "ack":
+            self.handle_ack(packet)
+        else:
+            raise Exception("Unknown packet type")
+
+    def send_syn(self, window_size):
+        self.send({ "type": "syn", "seq": self.current_sequence_number, "wnd": window_size })
+
+    def send_msg(self, data):
+        self.log("Sending message '%s'" % data)
+        self.send({ "type": "msg", "seq": self.current_sequence_number, "data": data })
+
+    def handle_ack(self, packet):
+        self.log("Received ACK packet '%s'" % packet)
+
+        if packet["seq"] in self.outstanding_packets:
+            del self.outstanding_packets[packet["seq"]]
+            del self.sent_packets[packet["seq"]]
+        else:
+            self.log(f"Received duplicate ACK, sequence number {packet['seq']}")
+
+    def is_window_full(self):
+        return len(list(filter(lambda timestamp: (time.time() - timestamp) < TIMEOUT, self.outstanding_packets.values()))) >= self.window_size
+
+    def no_outstanding_packets(self):
+        return len(self.outstanding_packets) == 0
+
+    def compute_checksum(self, packet: str):
+        packet_bytes = packet.encode('utf-8')
+        return hashlib.sha1(packet_bytes).hexdigest()
+
+    def validate_checksum(self, message: Dict[str, Any]) -> bool:
+        message_copy = message.copy()
+        del message_copy["checksum"]
+
+        computed_hashsum = hashlib.sha1(json.dumps(message_copy).encode('utf-8')).hexdigest()
+        return computed_hashsum == message["checksum"]
+
+    def get_delinquent_packets(self):
+        
+        def _delinquent_generator():
+            for seq, time_sent in self.outstanding_packets.items():
+                if time.time() - time_sent > TIMEOUT:
+                    yield self.sent_packets[seq]
+
+        return list(_delinquent_generator())
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='send data')
+    parser.add_argument('host', type=str, help="Remote host to connect to")
+    parser.add_argument('port', type=int, help="UDP port number to connect to")
+    args = parser.parse_args()
+    sender = Sender(args.host, args.port)
+    sender.run()
