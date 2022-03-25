@@ -89,6 +89,9 @@ class Receiver:
         return hashlib.sha1(packet_bytes).hexdigest()
 
     def validate_checksum(self, message: Dict[str, Any]) -> bool:
+        if "checksum" not in message.keys():
+            return False
+
         message_copy = message.copy()
         del message_copy["checksum"]
 
